@@ -25,6 +25,7 @@ library NFTDataStructures {
     struct RoyaltyConfig {
         address[] wallets;
         uint256[] percentages;
+        uint256 secondaryRoyaltyFee;
     }
 
     struct TokenConfig {
@@ -39,6 +40,5 @@ library NFTDataStructures {
         uint256 maxSupply;
         uint256 maxMintsPerWallet;
         uint256 NFTPriceInETH;
-        uint256 secondaryRoyaltyFee;
     }
 }

@@ -90,6 +90,7 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
     error EmergencyModeEnabled();
     error FeeTooHigh();
     error NotSeller();
+    error UnsupportedNFTContract();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() initializer {}
@@ -153,12 +154,21 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
 
         // Calcular platform fee
         uint256 platformFeeAmount = (msg.value * platformFee) / 10000;
-        
-        // Calcular regalías usando EIP-2981
-        (address royaltyReceiver, uint256 royaltyAmount) = IERC2981(nftContract).royaltyInfo(tokenId, msg.value);
-        
-        // Calcular cantidad para el vendedor
-        uint256 sellerAmount = msg.value - platformFeeAmount - royaltyAmount;
+        uint256 royaltyAmount;
+        address royaltyReceiver;
+        uint256 sellerAmount;
+
+        // Verificar si el contrato soporta EIP-2981
+        bool supportsRoyalties = IERC2981(nftContract).supportsInterface(type(IERC2981).interfaceId);
+
+        if (supportsRoyalties) {
+            // Calcular regalías usando EIP-2981
+            (royaltyReceiver, royaltyAmount) = IERC2981(nftContract).royaltyInfo(tokenId, msg.value);
+            sellerAmount = msg.value - platformFeeAmount - royaltyAmount;
+        } else {
+            // Si no soporta EIP-2981, todo va al vendedor después del platform fee
+            sellerAmount = msg.value - platformFeeAmount;
+        }
 
         // Actualizar estado
         listing.isActive = false;
@@ -183,20 +193,27 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
             block.timestamp
         );
 
-        // Royalty payment
-        if (royaltyReceiver != address(0) && royaltyAmount > 0) {
-            (success, ) = payable(royaltyReceiver).call{value: royaltyAmount}("");
-            if (!success) revert TransferFailed();
-            emit PaymentProcessed(
-                royaltyReceiver,
-                royaltyAmount,
-                "royalty",
-                nftContract,
-                tokenId,
-                block.timestamp
-            );
-        } else {
-            sellerAmount += royaltyAmount;
+        // Royalty payment si aplica
+        if (supportsRoyalties && royaltyReceiver != address(0) && royaltyAmount > 0) {
+            if (royaltyReceiver == nftContract) {
+                // Si el receptor es el contrato NFT, llamamos a distributeRoyalties
+                (success, ) = payable(nftContract).call{value: royaltyAmount}(
+                    abi.encodeWithSignature("distributeRoyalties(uint256)", royaltyAmount)
+                );
+                if (!success) revert TransferFailed();
+            } else {
+                // Caso tradicional de EIP-2981
+                (success, ) = payable(royaltyReceiver).call{value: royaltyAmount}("");
+                if (!success) revert TransferFailed();
+                emit PaymentProcessed(
+                    royaltyReceiver,
+                    royaltyAmount,
+                    "royalty",
+                    nftContract,
+                    tokenId,
+                    block.timestamp
+                );
+            }
         }
 
         // Seller payment
