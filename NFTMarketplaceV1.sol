@@ -6,15 +6,12 @@ import "@openzeppelin/contracts-upgradeable@4.8.0/security/PausableUpgradeable.s
 import "@openzeppelin/contracts-upgradeable@4.8.0/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable@4.8.0/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts@4.8.0/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts@4.8.0/interfaces/IERC2981.sol";
 
 /**
  * @title NFT Marketplace V1
- * @dev Implementación básica de marketplace para NFTs con sistema de comisiones
+ * @dev Implementación de marketplace para NFTs con pagos automáticos y soporte EIP-2981
  */
-interface ICustomNFT is IERC721 {
-    function owner() external view returns (address);
-}
-
 contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, PausableUpgradeable, OwnableUpgradeable {
     struct Listing {
         address seller;
@@ -27,10 +24,7 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
 
     // Variables de estado
     uint256 public platformFee;      // Base 10000 (2% = 200)
-    uint256 public creatorFee;       // Base 10000 (2% = 200)
-    
     mapping(address => mapping(uint256 => Listing)) public listings;
-    mapping(address => uint256) public pendingPayments;
     
     uint256 public totalVolume;
     uint256 public totalListings;
@@ -38,24 +32,64 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
     bool public isEmergencyMode;
 
     // Eventos
-    event TokenListed(address indexed nftContract, uint256 indexed tokenId, address indexed seller, uint256 price, uint256 timestamp);
+    event TokenListed(
+        address indexed nftContract, 
+        uint256 indexed tokenId, 
+        address indexed seller, 
+        uint256 price, 
+        uint256 timestamp
+    );
+
     event TokenSold(
         address indexed nftContract, 
         uint256 indexed tokenId, 
         address seller, 
         address indexed buyer, 
         uint256 price,
-        uint256 platformFeeAmount,
-        uint256 creatorFeeAmount,
         uint256 timestamp
     );
-    event ListingCancelled(address indexed nftContract, uint256 indexed tokenId, address indexed seller, uint256 timestamp);
-    event PriceUpdated(address indexed nftContract, uint256 indexed tokenId, uint256 oldPrice, uint256 newPrice);
-    event PaymentWithdrawn(address indexed user, uint256 amount, string paymentType);
+
+    event PaymentProcessed(
+        address indexed recipient,
+        uint256 amount,
+        string paymentType,
+        address indexed nftContract,
+        uint256 indexed tokenId,
+        uint256 timestamp
+    );
+
+    event ListingCancelled(
+        address indexed nftContract, 
+        uint256 indexed tokenId, 
+        address indexed seller, 
+        uint256 timestamp
+    );
+
+    event PriceUpdated(
+        address indexed nftContract, 
+        uint256 indexed tokenId, 
+        uint256 oldPrice, 
+        uint256 newPrice,
+        uint256 timestamp
+    );
+
     event EmergencyModeActivated(uint256 timestamp);
     event EmergencyModeDeactivated(uint256 timestamp);
-    event FeeUpdated(string feeType, uint256 oldFee, uint256 newFee);
-    event PaymentReceived(address indexed user, uint256 amount, string paymentType);
+    event PlatformFeeUpdated(uint256 oldFee, uint256 newFee, uint256 timestamp);
+
+    // Custom errors
+    error InvalidPrice();
+    error InvalidNFTContract();
+    error InvalidSender();
+    error NotTokenOwner();
+    error MarketplaceNotApproved();
+    error ListingNotActive();
+    error IncorrectPrice();
+    error SellerCannotBuy();
+    error TransferFailed();
+    error EmergencyModeEnabled();
+    error FeeTooHigh();
+    error NotSeller();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() initializer {}
@@ -66,33 +100,28 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
         __Ownable_init();
         
         platformFee = 200; // 2%
-        creatorFee = 200;  // 2%
         isEmergencyMode = false;
     }
 
     /**
      * @notice Lista un NFT para venta
-     * @param nftContract Dirección del contrato NFT
-     * @param tokenId ID del token
-     * @param price Precio en ETH (en wei)
      */
     function listToken(
         address nftContract,
         uint256 tokenId,
         uint256 price
     ) external whenNotPaused {
-        require(!isEmergencyMode, "Emergency mode: Listing disabled");
-        require(price > 0, "Price must be greater than 0");
-        require(nftContract != address(0), "Invalid NFT contract");
-        require(msg.sender != address(0), "Invalid sender address");
+        if (isEmergencyMode) revert EmergencyModeEnabled();
+        if (price == 0) revert InvalidPrice();
+        if (nftContract == address(0)) revert InvalidNFTContract();
+        if (msg.sender == address(0)) revert InvalidSender();
         
         IERC721 nft = IERC721(nftContract);
-        require(nft.ownerOf(tokenId) == msg.sender, "Not token owner");
-        require(
-            nft.getApproved(tokenId) == address(this) ||
-            nft.isApprovedForAll(msg.sender, address(this)),
-            "Marketplace not approved"
-        );
+        if (nft.ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
+        if (nft.getApproved(tokenId) != address(this) && 
+            !nft.isApprovedForAll(msg.sender, address(this))) {
+            revert MarketplaceNotApproved();
+        }
 
         listings[nftContract][tokenId] = Listing({
             seller: msg.sender,
@@ -109,56 +138,78 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
     }
 
     /**
-     * @notice Compra un NFT listado
-     * @param nftContract Dirección del contrato NFT
-     * @param tokenId ID del token
+     * @notice Compra un NFT listado con pagos automáticos
      */
     function buyToken(
         address nftContract,
         uint256 tokenId
     ) external payable nonReentrant whenNotPaused {
-        require(!isEmergencyMode, "Emergency mode: Buying disabled");
+        if (isEmergencyMode) revert EmergencyModeEnabled();
         
         Listing storage listing = listings[nftContract][tokenId];
-        require(listing.isActive, "Listing not active");
-        require(msg.value == listing.price, "Incorrect price");
-        require(msg.sender != listing.seller, "Seller cannot buy");
+        if (!listing.isActive) revert ListingNotActive();
+        if (msg.value != listing.price) revert IncorrectPrice();
+        if (msg.sender == listing.seller) revert SellerCannotBuy();
 
-        // Verificar que el contrato tiene suficiente balance
-        require(address(this).balance >= msg.value, "Insufficient contract balance");
-
-        // Calcular fees
+        // Calcular platform fee
         uint256 platformFeeAmount = (msg.value * platformFee) / 10000;
-        uint256 creatorFeeAmount = (msg.value * creatorFee) / 10000;
-        uint256 sellerAmount = msg.value - platformFeeAmount - creatorFeeAmount;
+        
+        // Calcular regalías usando EIP-2981
+        (address royaltyReceiver, uint256 royaltyAmount) = IERC2981(nftContract).royaltyInfo(tokenId, msg.value);
+        
+        // Calcular cantidad para el vendedor
+        uint256 sellerAmount = msg.value - platformFeeAmount - royaltyAmount;
 
         // Actualizar estado
         listing.isActive = false;
         totalSales++;
         totalVolume += msg.value;
 
-        // Asignar pagos
-        address creator = ICustomNFT(nftContract).owner();
-        
-        // Platform fee siempre va a pendingPayments del owner
-        pendingPayments[owner()] += platformFeeAmount;
-        emit PaymentReceived(owner(), platformFeeAmount, "platform");
+        // Transferir NFT primero (Check-Effects-Interactions pattern)
+        IERC721(nftContract).transferFrom(listing.seller, msg.sender, tokenId);
 
-        // Creator fee
-        if (creator != address(0)) {
-            pendingPayments[creator] += creatorFeeAmount;
-            emit PaymentReceived(creator, creatorFeeAmount, "creator");
+        // Procesar pagos
+        bool success;
+
+        // Platform fee payment
+        (success, ) = payable(owner()).call{value: platformFeeAmount}("");
+        if (!success) revert TransferFailed();
+        emit PaymentProcessed(
+            owner(),
+            platformFeeAmount,
+            "platform",
+            nftContract,
+            tokenId,
+            block.timestamp
+        );
+
+        // Royalty payment
+        if (royaltyReceiver != address(0) && royaltyAmount > 0) {
+            (success, ) = payable(royaltyReceiver).call{value: royaltyAmount}("");
+            if (!success) revert TransferFailed();
+            emit PaymentProcessed(
+                royaltyReceiver,
+                royaltyAmount,
+                "royalty",
+                nftContract,
+                tokenId,
+                block.timestamp
+            );
         } else {
-            pendingPayments[owner()] += creatorFeeAmount;
-            emit PaymentReceived(owner(), creatorFeeAmount, "platform");
+            sellerAmount += royaltyAmount;
         }
 
-        // Seller amount
-        pendingPayments[listing.seller] += sellerAmount;
-        emit PaymentReceived(listing.seller, sellerAmount, "seller");
-
-        // Transferir NFT
-        IERC721(nftContract).transferFrom(listing.seller, msg.sender, tokenId);
+        // Seller payment
+        (success, ) = payable(listing.seller).call{value: sellerAmount}("");
+        if (!success) revert TransferFailed();
+        emit PaymentProcessed(
+            listing.seller,
+            sellerAmount,
+            "seller",
+            nftContract,
+            tokenId,
+            block.timestamp
+        );
 
         emit TokenSold(
             nftContract,
@@ -166,27 +217,8 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
             listing.seller,
             msg.sender,
             msg.value,
-            platformFeeAmount,
-            creatorFeeAmount,
             block.timestamp
         );
-    }
-
-    /**
-     * @notice Retira los pagos pendientes
-     */
-    function withdrawPayments() external nonReentrant {
-        uint256 amount = pendingPayments[msg.sender];
-        require(amount > 0, "No pending payments");
-        require(address(this).balance >= amount, "Insufficient contract balance");
-        
-        pendingPayments[msg.sender] = 0;
-        
-        (bool success, ) = payable(msg.sender).call{value: amount}("");
-        require(success, "Transfer failed");
-
-        string memory paymentType = msg.sender == owner() ? "platform" : "other";
-        emit PaymentWithdrawn(msg.sender, amount, paymentType);
     }
 
     /**
@@ -197,8 +229,8 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
         uint256 tokenId
     ) external whenNotPaused {
         Listing storage listing = listings[nftContract][tokenId];
-        require(listing.seller == msg.sender, "Not the seller");
-        require(listing.isActive, "Listing not active");
+        if (listing.seller != msg.sender) revert NotSeller();
+        if (!listing.isActive) revert ListingNotActive();
 
         listing.isActive = false;
 
@@ -213,31 +245,24 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
         uint256 tokenId,
         uint256 newPrice
     ) external whenNotPaused {
-        require(newPrice > 0, "Price must be greater than 0");
+        if (newPrice == 0) revert InvalidPrice();
         
         Listing storage listing = listings[nftContract][tokenId];
-        require(listing.seller == msg.sender, "Not the seller");
-        require(listing.isActive, "Listing not active");
+        if (listing.seller != msg.sender) revert NotSeller();
+        if (!listing.isActive) revert ListingNotActive();
 
         uint256 oldPrice = listing.price;
         listing.price = newPrice;
 
-        emit PriceUpdated(nftContract, tokenId, oldPrice, newPrice);
+        emit PriceUpdated(nftContract, tokenId, oldPrice, newPrice, block.timestamp);
     }
 
-    // Funciones administrativas esenciales
+    // Funciones administrativas
     function setPlatformFee(uint256 newFee) external onlyOwner {
-        require(newFee <= 1000, "Fee too high"); // Max 10%
+        if (newFee > 1000) revert FeeTooHigh(); // Max 10%
         uint256 oldFee = platformFee;
         platformFee = newFee;
-        emit FeeUpdated("platform", oldFee, newFee);
-    }
-
-    function setCreatorFee(uint256 newFee) external onlyOwner {
-        require(newFee <= 1000, "Fee too high"); // Max 10%
-        uint256 oldFee = creatorFee;
-        creatorFee = newFee;
-        emit FeeUpdated("creator", oldFee, newFee);
+        emit PlatformFeeUpdated(oldFee, newFee, block.timestamp);
     }
 
     function setEmergencyMode(bool enabled) external onlyOwner {
@@ -257,20 +282,12 @@ contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, Pausable
         _unpause();
     }
 
-    // Funciones de vista esenciales
+    // Funciones de vista
     function getListing(
         address nftContract,
         uint256 tokenId
     ) external view returns (Listing memory) {
         return listings[nftContract][tokenId];
-    }
-
-    function getPendingPayments(address user) external view returns (uint256) {
-        return pendingPayments[user];
-    }
-
-    function getFees() external view returns (uint256, uint256) {
-        return (platformFee, creatorFee);
     }
 
     receive() external payable {}
