@@ -83,6 +83,10 @@ contract CustomNFT is ERC721Enumerable, IERC2981, Ownable, ReentrancyGuard, Paus
             tokenConfig.baseURI = params.metadataURI;
         }
 
+        if (params.initialOwner != address(0)) {
+            _transferOwnership(params.initialOwner);
+        }
+
         saleConfig.saleStartTime = params.saleStartTime;
         saleConfig.maxSupply = params.maxSupply;
         saleConfig.maxMintsPerWallet = params.maxMintsPerWallet;

@@ -10,6 +10,7 @@ library NFTDataStructures {
         string name;
         string symbol;
         address platformWallet;
+        address initialOwner;
         address[] royaltyWallets;
         uint256[] logicalPercentages;
         uint256 saleStartTime;

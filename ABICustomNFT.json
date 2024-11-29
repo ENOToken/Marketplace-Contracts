@@ -19,6 +19,11 @@
 						"type": "address"
 					},
 					{
+						"internalType": "address",
+						"name": "initialOwner",
+						"type": "address"
+					},
+					{
 						"internalType": "address[]",
 						"name": "royaltyWallets",
 						"type": "address[]"
@@ -359,6 +364,25 @@
 		"anonymous": false,
 		"inputs": [
 			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "totalAmount",
+				"type": "uint256"
+			},
+			{
+				"indexed": false,
+				"internalType": "uint256",
+				"name": "timestamp",
+				"type": "uint256"
+			}
+		],
+		"name": "SecondaryRoyaltyDistributed",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
 				"indexed": true,
 				"internalType": "address",
 				"name": "from",
@@ -490,6 +514,25 @@
 		"type": "function"
 	},
 	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "amount",
+				"type": "uint256"
+			}
+		],
+		"name": "distributeRoyalties",
+		"outputs": [
+			{
+				"internalType": "bool",
+				"name": "",
+				"type": "bool"
+			}
+		],
+		"stateMutability": "payable",
+		"type": "function"
+	},
+	{
 		"inputs": [],
 		"name": "emergencyMode",
 		"outputs": [
@@ -536,9 +579,49 @@
 						"internalType": "uint256[]",
 						"name": "percentages",
 						"type": "uint256[]"
+					},
+					{
+						"internalType": "uint256",
+						"name": "secondaryRoyaltyFee",
+						"type": "uint256"
 					}
 				],
 				"internalType": "struct NFTDataStructures.RoyaltyConfig",
+				"name": "",
+				"type": "tuple"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"name": "getSaleConfig",
+		"outputs": [
+			{
+				"components": [
+					{
+						"internalType": "uint256",
+						"name": "saleStartTime",
+						"type": "uint256"
+					},
+					{
+						"internalType": "uint256",
+						"name": "maxSupply",
+						"type": "uint256"
+					},
+					{
+						"internalType": "uint256",
+						"name": "maxMintsPerWallet",
+						"type": "uint256"
+					},
+					{
+						"internalType": "uint256",
+						"name": "NFTPriceInETH",
+						"type": "uint256"
+					}
+				],
+				"internalType": "struct NFTDataStructures.SaleConfig",
 				"name": "",
 				"type": "tuple"
 			}
@@ -792,11 +875,6 @@
 			{
 				"internalType": "uint256",
 				"name": "NFTPriceInETH",
-				"type": "uint256"
-			},
-			{
-				"internalType": "uint256",
-				"name": "secondaryRoyaltyFee",
 				"type": "uint256"
 			}
 		],

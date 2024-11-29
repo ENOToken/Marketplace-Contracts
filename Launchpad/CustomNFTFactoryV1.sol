@@ -80,6 +80,8 @@ contract CustomNFTFactoryV1 is Initializable, OwnableUpgradeable, PausableUpgrad
         }
         if (totalPercentage != 10000) revert InvalidPercentages();
 
+        params.initialOwner = msg.sender;
+
         // Create NFT contract
         address nftAddress = address(new CustomNFT(params));
 
