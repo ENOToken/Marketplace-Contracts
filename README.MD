@@ -55,7 +55,7 @@ Usar la función `createNFT` con estos parámetros en formato tupla:
 
 ### 3.2 Realizar la Actualización
 1. Ir al contrato ProxyAdmin (usar su dirección)
-2. Llamar a la función `upgrade` con:
+2. Llamar a la función `upgradeTo` con:
    - proxy: [dirección del CustomTransparentProxy]
    - implementation: [dirección del nuevo Factory V2]
 

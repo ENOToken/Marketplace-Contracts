@@ -9,7 +9,7 @@ import "./NFTDataStructures.sol";
 
 /// @title Custom NFT Factory with improved features and security
 /// @notice Factory contract for deploying CustomNFT contracts with extensive configuration options
-contract CustomNFTFactoryV1 is Initializable, OwnableUpgradeable, PausableUpgradeable, ReentrancyGuardUpgradeable {
+contract CustomNFTFactory is Initializable, OwnableUpgradeable, PausableUpgradeable, ReentrancyGuardUpgradeable {
     // State variables
     mapping(uint256 => address) public createdNFTs;
     mapping(address => bool) public isNFTCreated;
