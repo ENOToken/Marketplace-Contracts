@@ -146,7 +146,7 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
         platformFee = 200; // 2%
         isEmergencyMode = false;
         minOfferDuration = 1 hours;
-        maxOfferDuration = 365 days;
+        maxOfferDuration = 8761 hours;
     }
 
     /**
@@ -675,6 +675,22 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
 
         require(foundActive, "No active offers found");
         return (highestOffer, offerIndex);
+    }
+
+    /**
+     * @notice Cancela todas las ofertas existentes en el marketplace y devuelve los fondos
+     * @dev Esta función es solo para testing
+     */
+    function cancelAllOffers(
+        address[] calldata nftContracts,
+        uint256[] calldata tokenIds
+    ) external onlyOwner nonReentrant whenNotPaused {
+        if (nftContracts.length != tokenIds.length) revert("Arrays length mismatch");
+        
+        for (uint256 i = 0; i < nftContracts.length; i++) {
+            // Cancelamos todas las ofertas para cada NFT
+            _cancelAndRefundOffers(nftContracts[i], tokenIds[i], -1);
+        }
     }
 
     receive() external payable {}
