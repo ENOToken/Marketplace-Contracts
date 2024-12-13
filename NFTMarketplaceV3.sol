@@ -660,12 +660,15 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
         bool foundActive = false;
 
         for (uint256 i = 0; i < allOffers.length; i++) {
-            if (allOffers[i].isActive && 
-                block.timestamp < allOffers[i].expirationTime && 
-                allOffers[i].amount > highestAmount) {
-                highestOffer = allOffers[i];
+            Offer memory offer = allOffers[i];
+            // Solo consideramos ofertas que estén activas Y no expiradas
+            if (offer.isActive && 
+                block.timestamp < offer.expirationTime && 
+                offer.amount > highestAmount) {
+                // Actualizamos el máximo solo si la oferta está activa
+                highestOffer = offer;
                 offerIndex = i;
-                highestAmount = allOffers[i].amount;
+                highestAmount = offer.amount;
                 foundActive = true;
             }
         }
