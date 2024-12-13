@@ -9,10 +9,10 @@ import "@openzeppelin/contracts@4.8.0/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts@4.8.0/interfaces/IERC2981.sol";
 
 /**
- * @title NFT Marketplace V2
+ * @title NFT Marketplace V3
  * @dev Implementación de marketplace para NFTs con listados directos y sistema de ofertas
  */
-contract NFTMarketplaceV2 is Initializable, ReentrancyGuardUpgradeable, PausableUpgradeable, OwnableUpgradeable {
+contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, PausableUpgradeable, OwnableUpgradeable {
     struct Listing {
         address seller;
         address nftContract;
@@ -146,7 +146,7 @@ contract NFTMarketplaceV2 is Initializable, ReentrancyGuardUpgradeable, Pausable
         platformFee = 200; // 2%
         isEmergencyMode = false;
         minOfferDuration = 1 hours;
-        maxOfferDuration = 30 days;
+        maxOfferDuration = 365 days;
     }
 
     /**
@@ -183,6 +183,49 @@ contract NFTMarketplaceV2 is Initializable, ReentrancyGuardUpgradeable, Pausable
         emit TokenListed(nftContract, tokenId, msg.sender, price, block.timestamp);
     }
 
+
+    /**
+     * @dev Función interna para cancelar y reembolsar todas las ofertas activas
+     * @param nftContract Dirección del contrato NFT
+     * @param tokenId ID del token
+     * @param excludeIndex Índice de la oferta a excluir (para acceptOffer)
+     */
+    function _cancelAndRefundOffers(
+        address nftContract,
+        uint256 tokenId,
+        int256 excludeIndex
+    ) internal {
+        Offer[] storage tokenOffers = offers[nftContract][tokenId];
+        
+        for (uint256 i = 0; i < tokenOffers.length; i++) {
+            // Si hay un índice a excluir y es este, saltamos
+            if (excludeIndex >= 0 && i == uint256(excludeIndex)) {
+                continue;
+            }
+            
+            Offer storage offer = tokenOffers[i];
+            
+            // Solo procesamos ofertas activas y no expiradas
+            if (offer.isActive && block.timestamp < offer.expirationTime) {
+                // Marcamos la oferta como inactiva
+                offer.isActive = false;
+                
+                // Reembolsamos el ETH al ofertante
+                (bool success, ) = payable(offer.bidder).call{value: offer.amount}("");
+                if (!success) revert TransferFailed();
+                
+                // Emitimos el evento de cancelación
+                emit OfferCancelled(
+                    nftContract,
+                    tokenId,
+                    offer.bidder,
+                    block.timestamp
+                );
+            }
+        }
+    }
+
+
     /**
      * @notice Compra un NFT listado con pagos automáticos
      */
@@ -211,12 +254,18 @@ contract NFTMarketplaceV2 is Initializable, ReentrancyGuardUpgradeable, Pausable
             sellerAmount = msg.value - platformFeeAmount;
         }
 
+        // Marcamos el listing como inactivo y actualizamos estadísticas
         listing.isActive = false;
         totalSales++;
         totalVolume += msg.value;
 
+        // Cancelamos y reembolsamos todas las ofertas activas
+        _cancelAndRefundOffers(nftContract, tokenId, -1);
+
+        // Transferimos el NFT
         IERC721(nftContract).transferFrom(listing.seller, msg.sender, tokenId);
 
+        // Procesamos los pagos
         bool success;
 
         (success, ) = payable(owner()).call{value: platformFeeAmount}("");
@@ -272,7 +321,28 @@ contract NFTMarketplaceV2 is Initializable, ReentrancyGuardUpgradeable, Pausable
     }
 
     /**
-     * @notice Crea una oferta por un NFT específico
+     * @dev Función interna para encontrar una oferta activa de un wallet específico
+     */
+    function _findActiveOffer(
+        address nftContract,
+        uint256 tokenId,
+        address bidder
+    ) internal view returns (uint256, bool) {
+        Offer[] storage tokenOffers = offers[nftContract][tokenId];
+        
+        for (uint256 i = 0; i < tokenOffers.length; i++) {
+            if (tokenOffers[i].bidder == bidder && 
+                tokenOffers[i].isActive && 
+                block.timestamp < tokenOffers[i].expirationTime) {
+                return (i, true);
+            }
+        }
+        
+        return (0, false);
+    }
+
+    /**
+     * @notice Crea o modifica una oferta por un NFT específico
      */
     function makeOffer(
         address nftContract,
@@ -290,23 +360,53 @@ contract NFTMarketplaceV2 is Initializable, ReentrancyGuardUpgradeable, Pausable
             revert InvalidNFTContract();
         }
 
-        offers[nftContract][tokenId].push(Offer({
-            bidder: msg.sender,
-            amount: msg.value,
-            expirationTime: block.timestamp + duration,
-            isActive: true
-        }));
-
-        totalOffers++;
-
-        emit OfferCreated(
+        // Buscar si ya existe una oferta activa de este wallet
+        (uint256 existingOfferIndex, bool hasActiveOffer) = _findActiveOffer(
             nftContract,
             tokenId,
-            msg.sender,
-            msg.value,
-            block.timestamp + duration,
-            block.timestamp
+            msg.sender
         );
+
+        if (hasActiveOffer) {
+            // Modificar la oferta existente
+            Offer storage existingOffer = offers[nftContract][tokenId][existingOfferIndex];
+            
+            // Devolver el ETH de la oferta anterior
+            (bool success, ) = payable(msg.sender).call{value: existingOffer.amount}("");
+            if (!success) revert TransferFailed();
+            
+            // Actualizar la oferta con los nuevos valores
+            existingOffer.amount = msg.value;
+            existingOffer.expirationTime = block.timestamp + duration;
+            
+            emit OfferCreated(
+                nftContract,
+                tokenId,
+                msg.sender,
+                msg.value,
+                block.timestamp + duration,
+                block.timestamp
+            );
+        } else {
+            // Crear nueva oferta
+            offers[nftContract][tokenId].push(Offer({
+                bidder: msg.sender,
+                amount: msg.value,
+                expirationTime: block.timestamp + duration,
+                isActive: true
+            }));
+
+            totalOffers++;
+
+            emit OfferCreated(
+                nftContract,
+                tokenId,
+                msg.sender,
+                msg.value,
+                block.timestamp + duration,
+                block.timestamp
+            );
+        }
     }
 
     /**
@@ -340,12 +440,19 @@ contract NFTMarketplaceV2 is Initializable, ReentrancyGuardUpgradeable, Pausable
             sellerAmount = amount - platformFeeAmount;
         }
 
+        // Marcamos la oferta aceptada como inactiva
         offer.isActive = false;
+        
+        // Cancelamos y reembolsamos todas las otras ofertas activas
+        _cancelAndRefundOffers(nftContract, tokenId, int256(offerIndex));
+
         totalSales++;
         totalVolume += amount;
 
+        // Transferimos el NFT
         nft.transferFrom(msg.sender, offer.bidder, tokenId);
 
+        // Procesamos los pagos
         bool success;
 
         (success, ) = payable(owner()).call{value: platformFeeAmount}("");
@@ -421,17 +528,21 @@ contract NFTMarketplaceV2 is Initializable, ReentrancyGuardUpgradeable, Pausable
     }
 
     /**
-     * @notice Cancela un listing
+     * @notice Cancela un listing y todas las ofertas asociadas
      */
     function cancelListing(
         address nftContract,
         uint256 tokenId
-    ) external whenNotPaused {
+    ) external nonReentrant whenNotPaused {
         Listing storage listing = listings[nftContract][tokenId];
         if (listing.seller != msg.sender) revert NotSeller();
         if (!listing.isActive) revert ListingNotActive();
 
+        // Marcamos el listing como inactivo
         listing.isActive = false;
+
+        // Cancelamos y reembolsamos todas las ofertas activas
+        _cancelAndRefundOffers(nftContract, tokenId, -1);
 
         emit ListingCancelled(nftContract, tokenId, msg.sender, block.timestamp);
     }
