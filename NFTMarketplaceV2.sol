@@ -9,10 +9,10 @@ import "@openzeppelin/contracts@4.8.0/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts@4.8.0/interfaces/IERC2981.sol";
 
 /**
- * @title NFT Marketplace V1
+ * @title NFT Marketplace V2
  * @dev Implementación de marketplace para NFTs con listados directos y sistema de ofertas
  */
-contract NFTMarketplaceV1 is Initializable, ReentrancyGuardUpgradeable, PausableUpgradeable, OwnableUpgradeable {
+contract NFTMarketplaceV2 is Initializable, ReentrancyGuardUpgradeable, PausableUpgradeable, OwnableUpgradeable {
     struct Listing {
         address seller;
         address nftContract;
