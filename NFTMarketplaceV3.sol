@@ -109,6 +109,15 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
         uint256 timestamp
     );
 
+    event OfferRefunded(
+        address indexed nftContract,
+        uint256 indexed tokenId,
+        address indexed bidder,
+        uint256 amount,
+        string reason,
+        uint256 timestamp
+    );
+
     event EmergencyModeActivated(uint256 timestamp);
     event EmergencyModeDeactivated(uint256 timestamp);
     event PlatformFeeUpdated(uint256 oldFee, uint256 newFee, uint256 timestamp);
@@ -134,6 +143,7 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
     error OfferNotActive();
     error UnauthorizedAcceptance();
     error InsufficientOfferBalance();
+    error NoActiveListingForOffer();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() initializer {}
@@ -353,6 +363,10 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
         if (msg.value == 0) revert InvalidOfferAmount();
         if (duration < minOfferDuration || duration > maxOfferDuration) revert InvalidOfferDuration();
         
+        // Verificar que el NFT está listado
+        Listing storage listing = listings[nftContract][tokenId];
+        if (!listing.isActive) revert ListingNotActive();
+        
         IERC721 nft = IERC721(nftContract);
         try nft.ownerOf(tokenId) returns (address owner) {
             if (owner == msg.sender) revert SellerCannotBuy();
@@ -419,6 +433,11 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
     ) external nonReentrant whenNotPaused {
         if (isEmergencyMode) revert EmergencyModeEnabled();
 
+        // Verificar listing activo y permisos
+        Listing storage listing = listings[nftContract][tokenId];
+        if (!listing.isActive) revert ListingNotActive();
+        if (listing.seller != msg.sender) revert NotSeller();
+
         IERC721 nft = IERC721(nftContract);
         if (nft.ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
         
@@ -440,8 +459,9 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
             sellerAmount = amount - platformFeeAmount;
         }
 
-        // Marcamos la oferta aceptada como inactiva
+        // Marcamos la oferta aceptada como inactiva y el listing como inactivo
         offer.isActive = false;
+        listing.isActive = false;
         
         // Cancelamos y reembolsamos todas las otras ofertas activas
         _cancelAndRefundOffers(nftContract, tokenId, int256(offerIndex));
@@ -675,6 +695,44 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
 
         require(foundActive, "No active offers found");
         return (highestOffer, offerIndex);
+    }
+
+    /**
+    * @dev Retorna el número de ofertas activas para un NFT
+    */
+    function getActiveOffersCount(
+        address nftContract,
+        uint256 tokenId
+    ) external view returns (uint256) {
+        Offer[] memory allOffers = offers[nftContract][tokenId];
+        uint256 activeCount = 0;
+        
+        for (uint256 i = 0; i < allOffers.length; i++) {
+            if (allOffers[i].isActive && block.timestamp < allOffers[i].expirationTime) {
+                activeCount++;
+            }
+        }
+        
+        return activeCount;
+    }
+
+    /**
+    * @dev Verifica si un usuario tiene una oferta activa para un NFT
+    */
+    function hasActiveOffer(
+        address nftContract,
+        uint256 tokenId,
+        address user
+    ) external view returns (bool) {
+        (,bool hasOffer) = _findActiveOffer(nftContract, tokenId, user);
+        return hasOffer;
+    }
+
+    /**
+    * @dev Retorna los límites de duración actuales para las ofertas
+    */
+    function getOfferDurationLimits() external view returns (uint256 min, uint256 max) {
+        return (minOfferDuration, maxOfferDuration);
     }
 
     receive() external payable {}
