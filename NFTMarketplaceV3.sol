@@ -670,12 +670,19 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
 
     /**
      * @dev Retorna la oferta más alta activa para un NFT
+     * @param nftContract Dirección del contrato NFT
+     * @param tokenId ID del token NFT
+     * @return highestOffer La oferta más alta activa
+     * @return offerIndex El índice de la oferta más alta
      */
     function getHighestOffer(
         address nftContract,
         uint256 tokenId
     ) external view returns (Offer memory highestOffer, uint256 offerIndex) {
+        require(nftContract != address(0), "Invalid Contract NFT");
         Offer[] memory allOffers = offers[nftContract][tokenId];
+        require(allOffers.length > 0, "No Offers Found");
+        
         uint256 highestAmount = 0;
         bool foundActive = false;
 
@@ -704,6 +711,7 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
         address nftContract,
         uint256 tokenId
     ) external view returns (uint256) {
+        require(nftContract != address(0), "Invalid NFT Contract");
         Offer[] memory allOffers = offers[nftContract][tokenId];
         uint256 activeCount = 0;
         
@@ -724,6 +732,8 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
         uint256 tokenId,
         address user
     ) external view returns (bool) {
+        require(nftContract != address(0), "Invalid NFT Contract");
+        require(user != address(0), "Invalid User");
         (,bool hasOffer) = _findActiveOffer(nftContract, tokenId, user);
         return hasOffer;
     }
