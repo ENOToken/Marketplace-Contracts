@@ -29,12 +29,6 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
         bool isActive;
     }
 
-    struct NFTWithOffers {
-        address nftContract;
-        uint256 tokenId;
-        Offer[] activeOffers;
-    }
-
     // Variables de estado
     uint256 public platformFee;      // Base 10000 (2% = 200)
     mapping(address => mapping(uint256 => Listing)) public listings;
@@ -749,64 +743,6 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
     */
     function getOfferDurationLimits() external view returns (uint256 min, uint256 max) {
         return (minOfferDuration, maxOfferDuration);
-    }
-
-    function getMyNFTsWithOffers(address nftContract) external view returns (NFTWithOffers[] memory) {
-        require(nftContract != address(0), "Invalid NFT contract");
-        
-        IERC721 nft = IERC721(nftContract);
-        uint256 balance = nft.balanceOf(msg.sender);
-        
-        // Array temporal para almacenar resultados
-        NFTWithOffers[] memory result = new NFTWithOffers[](balance);
-        uint256 resultIndex = 0;
-        
-        // Iteramos sobre todos los NFTs del usuario
-        for (uint256 i = 0; i < balance; i++) {
-            uint256 tokenId = nft.tokenOfOwnerByIndex(msg.sender, i);
-            Offer[] memory activeOffers = new Offer[](0);
-            
-            // Verificamos si tiene ofertas activas
-            Offer[] memory allOffers = offers[nftContract][tokenId];
-            uint256 activeCount = 0;
-            
-            // Primero contamos ofertas activas
-            for (uint256 j = 0; j < allOffers.length; j++) {
-                if (allOffers[j].isActive && block.timestamp <= allOffers[j].expirationTime) {
-                    activeCount++;
-                }
-            }
-            
-            if (activeCount > 0) {
-                // Creamos array del tamaño exacto
-                activeOffers = new Offer[](activeCount);
-                uint256 activeIndex = 0;
-                
-                // Guardamos solo ofertas activas
-                for (uint256 j = 0; j < allOffers.length; j++) {
-                    if (allOffers[j].isActive && block.timestamp <= allOffers[j].expirationTime) {
-                        activeOffers[activeIndex] = allOffers[j];
-                        activeIndex++;
-                    }
-                }
-                
-                // Añadimos al resultado
-                result[resultIndex] = NFTWithOffers({
-                    nftContract: nftContract,
-                    tokenId: tokenId,
-                    activeOffers: activeOffers
-                });
-                resultIndex++;
-            }
-        }
-        
-        // Creamos array final del tamaño exacto
-        NFTWithOffers[] memory finalResult = new NFTWithOffers[](resultIndex);
-        for (uint256 i = 0; i < resultIndex; i++) {
-            finalResult[i] = result[i];
-        }
-        
-        return finalResult;
     }
 
     receive() external payable {}
