@@ -727,7 +727,7 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
     /**
     * @dev Verifica si un usuario tiene una oferta activa para un NFT
     */
-    function hasActiveOffer(
+    function hasActiveOffers(
         address nftContract,
         uint256 tokenId,
         address user
