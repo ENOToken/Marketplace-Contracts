@@ -7,7 +7,6 @@ import "@openzeppelin/contracts-upgradeable@4.8.0/access/OwnableUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable@4.8.0/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts@4.8.0/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts@4.8.0/interfaces/IERC2981.sol";
-import "@openzeppelin/contracts@4.8.0/token/ERC721/extensions/IERC721Enumerable.sol";
 
 /**
  * @title NFT Marketplace V3
@@ -755,10 +754,7 @@ contract NFTMarketplaceV3 is Initializable, ReentrancyGuardUpgradeable, Pausable
     function getMyNFTsWithOffers(address nftContract) external view returns (NFTWithOffers[] memory) {
         require(nftContract != address(0), "Invalid NFT contract");
         
-        IERC721Enumerable nft = IERC721Enumerable(nftContract);
-        require(IERC721Enumerable(nftContract).supportsInterface(type(IERC721Enumerable).interfaceId), 
-            "Contract must support IERC721Enumerable");
-        
+        IERC721 nft = IERC721(nftContract);
         uint256 balance = nft.balanceOf(msg.sender);
         
         // Array temporal para almacenar resultados
