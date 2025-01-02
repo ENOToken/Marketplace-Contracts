@@ -95,6 +95,7 @@ contract NFTMarketplaceV3 is
         address indexed bidder,
         uint256 amount,
         uint256 expirationTime,
+        uint256 offerIndex, // Añadido
         uint256 timestamp
     );
 
@@ -104,6 +105,7 @@ contract NFTMarketplaceV3 is
         address seller,
         address indexed bidder,
         uint256 amount,
+        uint256 offerIndex, // Añadido
         uint256 timestamp
     );
 
@@ -111,6 +113,7 @@ contract NFTMarketplaceV3 is
         address indexed nftContract,
         uint256 indexed tokenId,
         address indexed bidder,
+        uint256 offerIndex, // Añadido
         uint256 timestamp
     );
 
@@ -149,6 +152,7 @@ contract NFTMarketplaceV3 is
     error UnauthorizedAcceptance();
     error InsufficientOfferBalance();
     error NoActiveListingForOffer();
+    error NFTNotInContract();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() initializer {}
@@ -246,6 +250,7 @@ contract NFTMarketplaceV3 is
                     nftContract,
                     tokenId,
                     offer.bidder,
+                    i,
                     block.timestamp
                 );
             }
@@ -438,10 +443,12 @@ contract NFTMarketplaceV3 is
                 msg.sender,
                 msg.value,
                 block.timestamp + duration,
+                existingOfferIndex,
                 block.timestamp
             );
         } else {
             // Crear nueva oferta
+            uint256 newOfferIndex = offers[nftContract][tokenId].length;
             offers[nftContract][tokenId].push(
                 Offer({
                     bidder: msg.sender,
@@ -459,6 +466,7 @@ contract NFTMarketplaceV3 is
                 msg.sender,
                 msg.value,
                 block.timestamp + duration,
+                newOfferIndex,
                 block.timestamp
             );
         }
@@ -478,7 +486,6 @@ contract NFTMarketplaceV3 is
         if (!listing.isActive) revert ListingNotActive();
         if (listing.seller != msg.sender) revert NotSeller();
 
-        // Verificar que el NFT está en el contrato
         IERC721 nft = IERC721(nftContract);
         if (nft.ownerOf(tokenId) != address(this)) revert NFTNotInContract();
 
@@ -486,37 +493,78 @@ contract NFTMarketplaceV3 is
         if (!offer.isActive) revert OfferNotActive();
         if (block.timestamp >= offer.expirationTime) revert OfferExpired();
 
+        // Guardar valores importantes antes de modificar el estado
+        address bidder = offer.bidder;
         uint256 amount = offer.amount;
+
+        // Calcular las cantidades de pago
         uint256 platformFeeAmount = (amount * platformFee) / 10000;
-        uint256 royaltyAmount;
-        address royaltyReceiver;
-        uint256 sellerAmount;
-
-        bool supportsRoyalties = IERC2981(nftContract).supportsInterface(
-            type(IERC2981).interfaceId
+        (address royaltyReceiver, uint256 royaltyAmount) = _calculateRoyalties(
+            nftContract,
+            tokenId,
+            amount
         );
-        if (supportsRoyalties) {
-            (royaltyReceiver, royaltyAmount) = IERC2981(nftContract)
-                .royaltyInfo(tokenId, amount);
-            sellerAmount = amount - platformFeeAmount - royaltyAmount;
-        } else {
-            sellerAmount = amount - platformFeeAmount;
-        }
+        uint256 sellerAmount = amount - platformFeeAmount - royaltyAmount;
 
-        // Marcamos la oferta y el listing como inactivos
+        // Actualizar estado
         offer.isActive = false;
         listing.isActive = false;
-
-        // Cancelamos y reembolsamos todas las otras ofertas activas
-        _cancelAndRefundOffers(nftContract, tokenId, int256(offerIndex));
-
         totalSales++;
         totalVolume += amount;
 
-        // Transferimos el NFT desde el contrato al comprador
-        nft.transferFrom(address(this), offer.bidder, tokenId);
+        // Procesar pagos y eventos
+        _processPayments(
+            nftContract,
+            tokenId,
+            platformFeeAmount,
+            royaltyReceiver,
+            royaltyAmount,
+            sellerAmount
+        );
 
-        // Procesamos los pagos
+        // Cancelar otras ofertas
+        _cancelAndRefundOffers(nftContract, tokenId, int256(offerIndex));
+
+        // Transferir NFT
+        nft.transferFrom(address(this), bidder, tokenId);
+
+        emit OfferAccepted(
+            nftContract,
+            tokenId,
+            msg.sender,
+            bidder,
+            amount,
+            offerIndex,
+            block.timestamp
+        );
+    }
+
+    // Función auxiliar para calcular regalías
+    function _calculateRoyalties(
+        address nftContract,
+        uint256 tokenId,
+        uint256 amount
+    ) internal view returns (address receiver, uint256 royaltyAmount) {
+        if (
+            IERC2981(nftContract).supportsInterface(type(IERC2981).interfaceId)
+        ) {
+            (receiver, royaltyAmount) = IERC2981(nftContract).royaltyInfo(
+                tokenId,
+                amount
+            );
+        }
+        return (receiver, royaltyAmount);
+    }
+
+    // Función auxiliar para procesar pagos
+    function _processPayments(
+        address nftContract,
+        uint256 tokenId,
+        uint256 platformFeeAmount,
+        address royaltyReceiver,
+        uint256 royaltyAmount,
+        uint256 sellerAmount
+    ) internal {
         bool success;
 
         (success, ) = payable(owner()).call{value: platformFeeAmount}("");
@@ -530,11 +578,7 @@ contract NFTMarketplaceV3 is
             block.timestamp
         );
 
-        if (
-            supportsRoyalties &&
-            royaltyReceiver != address(0) &&
-            royaltyAmount > 0
-        ) {
+        if (royaltyReceiver != address(0) && royaltyAmount > 0) {
             if (royaltyReceiver == nftContract) {
                 (success, ) = payable(nftContract).call{value: royaltyAmount}(
                     abi.encodeWithSignature(
@@ -569,15 +613,6 @@ contract NFTMarketplaceV3 is
             tokenId,
             block.timestamp
         );
-
-        emit OfferAccepted(
-            nftContract,
-            tokenId,
-            msg.sender,
-            offer.bidder,
-            amount,
-            block.timestamp
-        );
     }
 
     /**
@@ -597,7 +632,13 @@ contract NFTMarketplaceV3 is
         (bool success, ) = payable(msg.sender).call{value: offer.amount}("");
         if (!success) revert TransferFailed();
 
-        emit OfferCancelled(nftContract, tokenId, msg.sender, block.timestamp);
+        emit OfferCancelled(
+            nftContract,
+            tokenId,
+            msg.sender,
+            offerIndex,
+            block.timestamp
+        );
     }
 
     /**

@@ -16,12 +16,6 @@ AdminProxy = 0x090F085F716271d6ff7Ebfc3967CBdCF184757D9
 
 Proxy Factory v3 = 0x4a1C71A9770D48A3eB8B301F3E33cA59e8cCabE0
 
-Proxy Marketplace v3.1 = 0x7B4c562073Dc5f296e4E7c14e6d687BA18E41A5f
+Proxy Marketplace v3.3 = 0x3Ab838d4BAFE240571265555B0540210CB5331dA
 
-
-
-   - `_data`: 0x8129fc1c
-
-
-
-   
+- `_data`: 0x8129fc1c
