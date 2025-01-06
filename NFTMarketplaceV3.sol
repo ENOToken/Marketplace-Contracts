@@ -95,7 +95,7 @@ contract NFTMarketplaceV3 is
         address indexed bidder,
         uint256 amount,
         uint256 expirationTime,
-        uint256 offerIndex, // Añadido
+        uint256 offerIndex,
         uint256 timestamp
     );
 
@@ -105,7 +105,7 @@ contract NFTMarketplaceV3 is
         address seller,
         address indexed bidder,
         uint256 amount,
-        uint256 offerIndex, // Añadido
+        uint256 offerIndex,
         uint256 timestamp
     );
 
@@ -113,7 +113,7 @@ contract NFTMarketplaceV3 is
         address indexed nftContract,
         uint256 indexed tokenId,
         address indexed bidder,
-        uint256 offerIndex, // Añadido
+        uint256 offerIndex,
         uint256 timestamp
     );
 
