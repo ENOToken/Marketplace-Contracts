@@ -1,4 +1,4 @@
-# Guía Completa: Sistema NFT Factory con Proxy
+# Guía Sistema NFT Factory con Proxy
 
 ## 1. Despliegue Inicial
 
@@ -103,5 +103,3 @@ Usar la función `createNFT` con estos parámetros en formato tupla:
 3. Documentar cada actualización
 4. Verificar el estado antes y después de actualizaciones
 5. Mantener acceso al ProxyAdmin seguro
-
-¿Necesitas que profundice en alguna parte específica de la guía?
