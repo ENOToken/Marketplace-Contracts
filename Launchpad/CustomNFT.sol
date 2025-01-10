@@ -9,7 +9,13 @@ import "@openzeppelin/contracts@4.8.0/security/Pausable.sol";
 import "@openzeppelin/contracts@4.8.0/utils/Strings.sol";
 import "./NFTDataStructures.sol";
 
-contract CustomNFT is ERC721Enumerable, IERC2981, Ownable, ReentrancyGuard, Pausable {
+contract CustomNFT is
+    ERC721Enumerable,
+    IERC2981,
+    Ownable,
+    ReentrancyGuard,
+    Pausable
+{
     using Strings for uint256;
     using NFTDataStructures for *;
 
@@ -31,10 +37,28 @@ contract CustomNFT is ERC721Enumerable, IERC2981, Ownable, ReentrancyGuard, Paus
     bool public emergencyMode;
 
     // Events
-    event PrimarySale(address indexed buyer, uint256 tokenId, uint256 price, uint256 timestamp);
-    event RoyaltyPaid(address indexed recipient, uint256 amount, string royaltyType, uint256 timestamp);
-    event RoyaltiesConfigured(address[] wallets, uint256[] logicalPercentages, uint256 timestamp);
-    event MetadataUpdated(string newBaseURI, string newCommonMetadataURI, uint256 timestamp);
+    event PrimarySale(
+        address indexed buyer,
+        uint256 tokenId,
+        uint256 price,
+        uint256 timestamp
+    );
+    event RoyaltyPaid(
+        address indexed recipient,
+        uint256 amount,
+        string royaltyType,
+        uint256 timestamp
+    );
+    event RoyaltiesConfigured(
+        address[] wallets,
+        uint256[] logicalPercentages,
+        uint256 timestamp
+    );
+    event MetadataUpdated(
+        string newBaseURI,
+        string newCommonMetadataURI,
+        uint256 timestamp
+    );
     event EmergencyModeChanged(bool enabled, uint256 timestamp);
     event SecondaryRoyaltyDistributed(uint256 totalAmount, uint256 timestamp);
 
@@ -53,28 +77,32 @@ contract CustomNFT is ERC721Enumerable, IERC2981, Ownable, ReentrancyGuard, Paus
     error ImmutableMetadata();
     error TransferFailed();
 
-    constructor(NFTDataStructures.NFTCreateParams memory params) 
-        ERC721(params.name, params.symbol) 
-    {
+    constructor(
+        NFTDataStructures.NFTCreateParams memory params
+    ) ERC721(params.name, params.symbol) {
         if (params.platformWallet == address(0)) revert InvalidPlatformWallet();
-        if (params.royaltyWallets.length != params.logicalPercentages.length) revert WalletsPercentagesMismatch();
+        if (params.royaltyWallets.length != params.logicalPercentages.length)
+            revert WalletsPercentagesMismatch();
         if (params.royaltyWallets.length > MAX_WALLETS) revert TooManyWallets();
-        if (params.secondaryRoyaltyFee < MIN_SECONDARY_ROYALTY || 
-            params.secondaryRoyaltyFee > MAX_SECONDARY_ROYALTY) revert InvalidSecondaryRoyalty();
-        
+        if (
+            params.secondaryRoyaltyFee < MIN_SECONDARY_ROYALTY ||
+            params.secondaryRoyaltyFee > MAX_SECONDARY_ROYALTY
+        ) revert InvalidSecondaryRoyalty();
+
         uint256 totalLogicalPercentage;
         for (uint256 i = 0; i < params.logicalPercentages.length; i++) {
-            if (params.royaltyWallets[i] == address(0)) revert InvalidRoyaltyWallets();
+            if (params.royaltyWallets[i] == address(0))
+                revert InvalidRoyaltyWallets();
             totalLogicalPercentage += params.logicalPercentages[i];
         }
         if (totalLogicalPercentage != 10000) revert InvalidPercentages();
 
         platformWallet = params.platformWallet;
-        
+
         royaltyConfig.wallets = params.royaltyWallets;
         royaltyConfig.percentages = params.logicalPercentages;
         royaltyConfig.secondaryRoyaltyFee = params.secondaryRoyaltyFee;
-        
+
         tokenConfig.sameMetadataForAll = params.sameMetadataForAll;
         tokenConfig.metadataMutable = params.metadataMutable;
         if (params.sameMetadataForAll) {
@@ -89,17 +117,28 @@ contract CustomNFT is ERC721Enumerable, IERC2981, Ownable, ReentrancyGuard, Paus
 
         saleConfig.saleStartTime = params.saleStartTime;
         saleConfig.maxSupply = params.maxSupply;
-        saleConfig.maxMintsPerWallet = params.maxMintsPerWallet;
+
+        if (params.maxMintsPerWallet == 0) {
+            saleConfig.maxMintsPerWallet = params.maxSupply;
+        } else {
+            saleConfig.maxMintsPerWallet = params.maxMintsPerWallet;
+        }
+
         saleConfig.NFTPriceInETH = params.NFTPriceInETH;
 
-        emit RoyaltiesConfigured(params.royaltyWallets, params.logicalPercentages, block.timestamp);
+        emit RoyaltiesConfigured(
+            params.royaltyWallets,
+            params.logicalPercentages,
+            block.timestamp
+        );
     }
 
     function buyNFTWithETH() public payable nonReentrant whenNotPaused {
         if (emergencyMode) revert EmergencyModeActive();
         if (block.timestamp < saleConfig.saleStartTime) revert SaleNotStarted();
         if (msg.value != saleConfig.NFTPriceInETH) revert IncorrectPayment();
-        if (_mintedCount[msg.sender] >= saleConfig.maxMintsPerWallet) revert MaxMintsExceeded();
+        if (_mintedCount[msg.sender] >= saleConfig.maxMintsPerWallet)
+            revert MaxMintsExceeded();
         if (_tokenIdCounter > saleConfig.maxSupply) revert MaxSupplyReached();
 
         uint256 tokenId = _tokenIdCounter++;
@@ -117,33 +156,58 @@ contract CustomNFT is ERC721Enumerable, IERC2981, Ownable, ReentrancyGuard, Paus
 
         (bool success, ) = platformWallet.call{value: platformAmount}("");
         if (!success) revert TransferFailed();
-        emit RoyaltyPaid(platformWallet, platformAmount, "platform", block.timestamp);
+        emit RoyaltyPaid(
+            platformWallet,
+            platformAmount,
+            "platform",
+            block.timestamp
+        );
 
         for (uint256 i = 0; i < royaltyConfig.wallets.length; i++) {
-            uint256 amount = (remainingAmount * royaltyConfig.percentages[i]) / 10000;
+            uint256 amount = (remainingAmount * royaltyConfig.percentages[i]) /
+                10000;
             (success, ) = royaltyConfig.wallets[i].call{value: amount}("");
             if (!success) revert TransferFailed();
-            emit RoyaltyPaid(royaltyConfig.wallets[i], amount, "primary", block.timestamp);
+            emit RoyaltyPaid(
+                royaltyConfig.wallets[i],
+                amount,
+                "primary",
+                block.timestamp
+            );
         }
     }
 
-    function distributeRoyalties(uint256 amount) external payable returns (bool) {
+    function distributeRoyalties(
+        uint256 amount
+    ) external payable returns (bool) {
         require(msg.value == amount, "Incorrect royalty amount");
-        
+
         bool success;
         for (uint256 i = 0; i < royaltyConfig.wallets.length; i++) {
-            uint256 walletAmount = (amount * royaltyConfig.percentages[i]) / 10000;
-            (success, ) = royaltyConfig.wallets[i].call{value: walletAmount}("");
+            uint256 walletAmount = (amount * royaltyConfig.percentages[i]) /
+                10000;
+            (success, ) = royaltyConfig.wallets[i].call{value: walletAmount}(
+                ""
+            );
             if (!success) revert TransferFailed();
-            emit RoyaltyPaid(royaltyConfig.wallets[i], walletAmount, "secondary", block.timestamp);
+            emit RoyaltyPaid(
+                royaltyConfig.wallets[i],
+                walletAmount,
+                "secondary",
+                block.timestamp
+            );
         }
-        
+
         emit SecondaryRoyaltyDistributed(amount, block.timestamp);
         return true;
     }
 
-    function updateRoyalties(address[] memory wallets, uint256[] memory percentages) public onlyOwner {
-        if (wallets.length != percentages.length) revert WalletsPercentagesMismatch();
+    function updateRoyalties(
+        address[] memory wallets,
+        uint256[] memory percentages
+    ) public onlyOwner {
+        if (wallets.length != percentages.length)
+            revert WalletsPercentagesMismatch();
         if (wallets.length > MAX_WALLETS) revert TooManyWallets();
 
         uint256 totalLogicalPercentage;
@@ -159,9 +223,12 @@ contract CustomNFT is ERC721Enumerable, IERC2981, Ownable, ReentrancyGuard, Paus
         emit RoyaltiesConfigured(wallets, percentages, block.timestamp);
     }
 
-    function updateMetadata(string memory newBaseURI, string memory newCommonMetadataURI) public onlyOwner {
+    function updateMetadata(
+        string memory newBaseURI,
+        string memory newCommonMetadataURI
+    ) public onlyOwner {
         if (!tokenConfig.metadataMutable) revert ImmutableMetadata();
-        
+
         tokenConfig.baseURI = newBaseURI;
         tokenConfig.commonMetadataURI = newCommonMetadataURI;
 
@@ -182,35 +249,61 @@ contract CustomNFT is ERC721Enumerable, IERC2981, Ownable, ReentrancyGuard, Paus
     }
 
     function royaltyInfo(
-        uint256, 
+        uint256,
         uint256 salePrice
     ) external view override returns (address, uint256) {
-        return (address(this), (salePrice * royaltyConfig.secondaryRoyaltyFee) / 10000);
+        return (
+            address(this),
+            (salePrice * royaltyConfig.secondaryRoyaltyFee) / 10000
+        );
     }
 
-    function tokenURI(uint256 tokenId) public view override returns (string memory) {
+    function tokenURI(
+        uint256 tokenId
+    ) public view override returns (string memory) {
         require(_exists(tokenId), "URI query for nonexistent token");
-        return tokenConfig.sameMetadataForAll ? 
-            tokenConfig.commonMetadataURI : 
-            string(abi.encodePacked(tokenConfig.baseURI, tokenId.toString(), ".json"));
+        return
+            tokenConfig.sameMetadataForAll
+                ? tokenConfig.commonMetadataURI
+                : string(
+                    abi.encodePacked(
+                        tokenConfig.baseURI,
+                        tokenId.toString(),
+                        ".json"
+                    )
+                );
     }
 
-    function getRoyaltyConfig() external view returns (NFTDataStructures.RoyaltyConfig memory) {
+    function getRoyaltyConfig()
+        external
+        view
+        returns (NFTDataStructures.RoyaltyConfig memory)
+    {
         return royaltyConfig;
     }
 
-    function getTokenConfig() external view returns (NFTDataStructures.TokenConfig memory) {
+    function getTokenConfig()
+        external
+        view
+        returns (NFTDataStructures.TokenConfig memory)
+    {
         return tokenConfig;
     }
 
-    function getSaleConfig() external view returns (NFTDataStructures.SaleConfig memory) {
+    function getSaleConfig()
+        external
+        view
+        returns (NFTDataStructures.SaleConfig memory)
+    {
         return saleConfig;
     }
 
     function supportsInterface(
         bytes4 interfaceId
     ) public view virtual override(ERC721Enumerable, IERC165) returns (bool) {
-        return interfaceId == type(IERC2981).interfaceId || super.supportsInterface(interfaceId);
+        return
+            interfaceId == type(IERC2981).interfaceId ||
+            super.supportsInterface(interfaceId);
     }
 
     receive() external payable {}
