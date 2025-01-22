@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import "@openzeppelin/contracts-upgradeable@4.8.0/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable@4.8.0/security/PausableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable@4.8.0/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "./CustomNFT.sol";
 import "./NFTDataStructures.sol";
+import "./Constants.sol";
 
 /// @title Custom NFT Factory with improved features and security
 /// @notice Factory contract for deploying CustomNFT contracts with extensive configuration options
@@ -15,27 +16,22 @@ contract CustomNFTFactory is
     PausableUpgradeable,
     ReentrancyGuardUpgradeable
 {
-    // State variables
-    mapping(uint256 => address) public createdNFTs;
-    mapping(address => bool) public isNFTCreated;
-    uint256 public totalNFTs;
-
-    // Constants
-    uint256 public constant MIN_SECONDARY_ROYALTY = 200; // 2%
-    uint256 public constant MAX_SECONDARY_ROYALTY = 1000; // 10%
-    uint256 public constant MAX_WALLETS = 10;
-
     // Events
     event NFTCreated(
         address indexed creator,
         address indexed nftAddress,
-        uint256 indexed index,
         string name,
         string symbol,
         string metadataURI,
         bool metadataMutable,
-        uint256 secondaryRoyaltyFee
+        uint256 secondaryRoyaltyFee,
+        uint256 maxSupply,
+        uint256 NFTPriceInETH,
+        address[] royaltyWallets, // Nuevo parámetro
+        uint256[] logicalPercentages
     );
+    event ContractPaused(address indexed operator);
+    event ContractUnpaused(address indexed operator);
 
     // Custom errors
     error InvalidPlatformWallet();
@@ -47,6 +43,10 @@ contract CustomNFTFactory is
     error InvalidMaxMints();
     error WalletsPercentagesMismatch();
     error TooManyWallets();
+    error DuplicateRoyaltyWallet();
+    error InvalidName();
+    error InvalidSymbol();
+    error InvalidMetadataURI();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -65,16 +65,19 @@ contract CustomNFTFactory is
         NFTDataStructures.NFTCreateParams memory params
     ) external whenNotPaused nonReentrant returns (address) {
         // Validate parameters
+        if (bytes(params.name).length == 0) revert InvalidName();
+        if (bytes(params.symbol).length == 0) revert InvalidSymbol();
+        if (bytes(params.metadataURI).length == 0) revert InvalidMetadataURI();
         if (params.platformWallet == address(0)) revert InvalidPlatformWallet();
         if (params.maxSupply == 0) revert InvalidMaxSupply();
-        if (params.NFTPriceInETH == 0) revert InvalidPrice();
         if (
-            params.secondaryRoyaltyFee < MIN_SECONDARY_ROYALTY ||
-            params.secondaryRoyaltyFee > MAX_SECONDARY_ROYALTY
+            params.secondaryRoyaltyFee < NFTConstants.MIN_SECONDARY_ROYALTY ||
+            params.secondaryRoyaltyFee > NFTConstants.MAX_SECONDARY_ROYALTY
         ) revert InvalidSecondaryRoyalty();
         if (params.royaltyWallets.length != params.logicalPercentages.length)
             revert WalletsPercentagesMismatch();
-        if (params.royaltyWallets.length > MAX_WALLETS) revert TooManyWallets();
+        if (params.royaltyWallets.length > NFTConstants.MAX_WALLETS)
+            revert TooManyWallets();
 
         // Validate royalty wallets and percentages
         uint256 totalPercentage;
@@ -83,6 +86,12 @@ contract CustomNFTFactory is
                 revert InvalidRoyaltyWallets();
             totalPercentage += params.logicalPercentages[i];
         }
+        for (uint256 i = 0; i < params.royaltyWallets.length; i++) {
+            for (uint256 j = i + 1; j < params.royaltyWallets.length; j++) {
+                if (params.royaltyWallets[i] == params.royaltyWallets[j])
+                    revert DuplicateRoyaltyWallet();
+            }
+        }
         if (totalPercentage != 10000) revert InvalidPercentages();
 
         params.initialOwner = msg.sender;
@@ -90,69 +99,30 @@ contract CustomNFTFactory is
         // Create NFT contract
         address nftAddress = address(new CustomNFT(params));
 
-        // Update state
-        createdNFTs[totalNFTs] = nftAddress;
-        isNFTCreated[nftAddress] = true;
-
         emit NFTCreated(
             msg.sender,
             nftAddress,
-            totalNFTs,
             params.name,
             params.symbol,
             params.metadataURI,
             params.metadataMutable,
-            params.secondaryRoyaltyFee
+            params.secondaryRoyaltyFee,
+            params.maxSupply,
+            params.NFTPriceInETH,
+            params.royaltyWallets,
+            params.logicalPercentages
         );
 
-        totalNFTs++;
         return nftAddress;
     }
 
-    /// @notice Returns the total number of NFT contracts created
-    function getNumberOfCreatedNFTs() external view returns (uint256) {
-        return totalNFTs;
-    }
-
-    /// @notice Returns a paginated list of created NFT contracts
-    /// @param offset Starting index
-    /// @param limit Maximum number of addresses to return
-    function getCreatedNFTsPaginated(
-        uint256 offset,
-        uint256 limit
-    ) external view returns (address[] memory) {
-        require(offset < totalNFTs, "Offset out of bounds");
-
-        uint256 endIndex = offset + limit;
-        if (endIndex > totalNFTs) {
-            endIndex = totalNFTs;
-        }
-
-        uint256 length = endIndex - offset;
-        address[] memory result = new address[](length);
-
-        for (uint256 i = 0; i < length; i++) {
-            result[i] = createdNFTs[offset + i];
-        }
-
-        return result;
-    }
-
-    /// @notice Checks if an address is a valid NFT contract created by this factory
-    /// @param nftAddress Address to check
-    function isValidNFTContract(
-        address nftAddress
-    ) external view returns (bool) {
-        return isNFTCreated[nftAddress];
-    }
-
-    /// @notice Pauses the contract
     function pause() external onlyOwner {
         _pause();
+        emit ContractPaused(msg.sender);
     }
 
-    /// @notice Unpauses the contract
     function unpause() external onlyOwner {
         _unpause();
+        emit ContractUnpaused(msg.sender);
     }
 }

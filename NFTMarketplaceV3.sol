@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import "@openzeppelin/contracts-upgradeable@4.8.0/security/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable@4.8.0/security/PausableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable@4.8.0/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable@4.8.0/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts@4.8.0/token/ERC721/IERC721.sol";
-import "@openzeppelin/contracts@4.8.0/interfaces/IERC2981.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/interfaces/IERC2981.sol";
 
 /**
  * @title NFT Marketplace V3
@@ -93,6 +93,7 @@ contract NFTMarketplaceV3 is
         address indexed nftContract,
         uint256 indexed tokenId,
         address indexed bidder,
+        address seller,
         uint256 amount,
         uint256 expirationTime,
         uint256 offerIndex,
@@ -113,6 +114,7 @@ contract NFTMarketplaceV3 is
         address indexed nftContract,
         uint256 indexed tokenId,
         address indexed bidder,
+        address seller,
         uint256 offerIndex,
         uint256 timestamp
     );
@@ -224,6 +226,7 @@ contract NFTMarketplaceV3 is
         uint256 tokenId,
         int256 excludeIndex
     ) internal {
+        Listing storage listing = listings[nftContract][tokenId];
         Offer[] storage tokenOffers = offers[nftContract][tokenId];
 
         for (uint256 i = 0; i < tokenOffers.length; i++) {
@@ -250,6 +253,7 @@ contract NFTMarketplaceV3 is
                     nftContract,
                     tokenId,
                     offer.bidder,
+                    listing.seller,
                     i,
                     block.timestamp
                 );
@@ -400,6 +404,9 @@ contract NFTMarketplaceV3 is
     ) external payable whenNotPaused nonReentrant {
         if (isEmergencyMode) revert EmergencyModeEnabled();
         if (msg.value == 0) revert InvalidOfferAmount();
+        // Verificar que el creador de oferta no es el propietario del NFT
+        if (msg.sender == IERC721(nftContract).ownerOf(tokenId))
+            revert SellerCannotBuy();
         if (duration < minOfferDuration || duration > maxOfferDuration)
             revert InvalidOfferDuration();
 
@@ -441,6 +448,7 @@ contract NFTMarketplaceV3 is
                 nftContract,
                 tokenId,
                 msg.sender,
+                listing.seller,
                 msg.value,
                 block.timestamp + duration,
                 existingOfferIndex,
@@ -464,6 +472,7 @@ contract NFTMarketplaceV3 is
                 nftContract,
                 tokenId,
                 msg.sender,
+                listing.seller,
                 msg.value,
                 block.timestamp + duration,
                 newOfferIndex,
@@ -623,6 +632,7 @@ contract NFTMarketplaceV3 is
         uint256 tokenId,
         uint256 offerIndex
     ) external nonReentrant whenNotPaused {
+        Listing storage listing = listings[nftContract][tokenId];
         Offer storage offer = offers[nftContract][tokenId][offerIndex];
         if (msg.sender != offer.bidder) revert NotSeller();
         if (!offer.isActive) revert OfferNotActive();
@@ -636,6 +646,7 @@ contract NFTMarketplaceV3 is
             nftContract,
             tokenId,
             msg.sender,
+            listing.seller,
             offerIndex,
             block.timestamp
         );

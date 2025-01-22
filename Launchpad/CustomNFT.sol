@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import "@openzeppelin/contracts@4.8.0/token/ERC721/extensions/ERC721Enumerable.sol";
-import "@openzeppelin/contracts@4.8.0/interfaces/IERC2981.sol";
-import "@openzeppelin/contracts@4.8.0/access/Ownable.sol";
-import "@openzeppelin/contracts@4.8.0/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts@4.8.0/security/Pausable.sol";
-import "@openzeppelin/contracts@4.8.0/utils/Strings.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "@openzeppelin/contracts/interfaces/IERC2981.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 import "./NFTDataStructures.sol";
+import "./Constants.sol";
 
 contract CustomNFT is
     ERC721Enumerable,
@@ -18,12 +19,6 @@ contract CustomNFT is
 {
     using Strings for uint256;
     using NFTDataStructures for *;
-
-    // Constants
-    uint256 public constant PLATFORM_FEE = 200; // 2% (basis points)
-    uint256 public constant MAX_WALLETS = 10;
-    uint256 public constant MIN_SECONDARY_ROYALTY = 200; // 2%
-    uint256 public constant MAX_SECONDARY_ROYALTY = 1000; // 10%
 
     // Configurations
     NFTDataStructures.RoyaltyConfig private royaltyConfig;
@@ -76,6 +71,7 @@ contract CustomNFT is
     error EmergencyModeActive();
     error ImmutableMetadata();
     error TransferFailed();
+    error DuplicateRoyaltyWallet();
 
     constructor(
         NFTDataStructures.NFTCreateParams memory params
@@ -83,12 +79,18 @@ contract CustomNFT is
         if (params.platformWallet == address(0)) revert InvalidPlatformWallet();
         if (params.royaltyWallets.length != params.logicalPercentages.length)
             revert WalletsPercentagesMismatch();
-        if (params.royaltyWallets.length > MAX_WALLETS) revert TooManyWallets();
+        if (params.royaltyWallets.length > NFTConstants.MAX_WALLETS)
+            revert TooManyWallets();
         if (
-            params.secondaryRoyaltyFee < MIN_SECONDARY_ROYALTY ||
-            params.secondaryRoyaltyFee > MAX_SECONDARY_ROYALTY
+            params.secondaryRoyaltyFee < NFTConstants.MIN_SECONDARY_ROYALTY ||
+            params.secondaryRoyaltyFee > NFTConstants.MAX_SECONDARY_ROYALTY
         ) revert InvalidSecondaryRoyalty();
-
+        for (uint256 i = 0; i < params.royaltyWallets.length; i++) {
+            for (uint256 j = i + 1; j < params.royaltyWallets.length; j++) {
+                if (params.royaltyWallets[i] == params.royaltyWallets[j])
+                    revert DuplicateRoyaltyWallet();
+            }
+        }
         uint256 totalLogicalPercentage;
         for (uint256 i = 0; i < params.logicalPercentages.length; i++) {
             if (params.royaltyWallets[i] == address(0))
@@ -117,13 +119,6 @@ contract CustomNFT is
 
         saleConfig.saleStartTime = params.saleStartTime;
         saleConfig.maxSupply = params.maxSupply;
-
-        if (params.maxMintsPerWallet == 0) {
-            saleConfig.maxMintsPerWallet = params.maxSupply;
-        } else {
-            saleConfig.maxMintsPerWallet = params.maxMintsPerWallet;
-        }
-
         saleConfig.NFTPriceInETH = params.NFTPriceInETH;
 
         emit RoyaltiesConfigured(
@@ -151,7 +146,8 @@ contract CustomNFT is
     }
 
     function _processPrimarySale() private {
-        uint256 platformAmount = (msg.value * PLATFORM_FEE) / 10000;
+        uint256 platformAmount = (msg.value * NFTConstants.PLATFORM_FEE) /
+            10000;
         uint256 remainingAmount = msg.value - platformAmount;
 
         (bool success, ) = platformWallet.call{value: platformAmount}("");
@@ -179,17 +175,23 @@ contract CustomNFT is
 
     function distributeRoyalties(
         uint256 amount
-    ) external payable returns (bool) {
+    ) external payable nonReentrant returns (bool) {
         require(msg.value == amount, "Incorrect royalty amount");
+        require(amount > 0, "Amount must be greater than 0"); // Añadir esta validación
 
+        uint256 remainingAmount = amount; // Para verificar que se distribuye todo
         bool success;
+
         for (uint256 i = 0; i < royaltyConfig.wallets.length; i++) {
             uint256 walletAmount = (amount * royaltyConfig.percentages[i]) /
                 10000;
+            remainingAmount -= walletAmount;
+
             (success, ) = royaltyConfig.wallets[i].call{value: walletAmount}(
                 ""
             );
             if (!success) revert TransferFailed();
+
             emit RoyaltyPaid(
                 royaltyConfig.wallets[i],
                 walletAmount,
@@ -198,6 +200,7 @@ contract CustomNFT is
             );
         }
 
+        require(remainingAmount == 0, "Distribution error"); // Verificar distribución completa
         emit SecondaryRoyaltyDistributed(amount, block.timestamp);
         return true;
     }
@@ -205,11 +208,16 @@ contract CustomNFT is
     function updateRoyalties(
         address[] memory wallets,
         uint256[] memory percentages
-    ) public onlyOwner {
+    ) public nonReentrant onlyOwner {
         if (wallets.length != percentages.length)
             revert WalletsPercentagesMismatch();
-        if (wallets.length > MAX_WALLETS) revert TooManyWallets();
-
+        if (wallets.length > NFTConstants.MAX_WALLETS) revert TooManyWallets();
+        // Añadir validación de wallets duplicados
+        for (uint256 i = 0; i < wallets.length; i++) {
+            for (uint256 j = i + 1; j < wallets.length; j++) {
+                if (wallets[i] == wallets[j]) revert DuplicateRoyaltyWallet();
+            }
+        }
         uint256 totalLogicalPercentage;
         for (uint256 i = 0; i < percentages.length; i++) {
             if (wallets[i] == address(0)) revert InvalidRoyaltyWallets();
@@ -262,16 +270,23 @@ contract CustomNFT is
         uint256 tokenId
     ) public view override returns (string memory) {
         require(_exists(tokenId), "URI query for nonexistent token");
-        return
-            tokenConfig.sameMetadataForAll
-                ? tokenConfig.commonMetadataURI
-                : string(
+        if (tokenConfig.sameMetadataForAll) {
+            require(
+                bytes(tokenConfig.commonMetadataURI).length > 0,
+                "Empty URI"
+            );
+            return tokenConfig.commonMetadataURI;
+        } else {
+            require(bytes(tokenConfig.baseURI).length > 0, "Empty base URI");
+            return
+                string(
                     abi.encodePacked(
                         tokenConfig.baseURI,
                         tokenId.toString(),
                         ".json"
                     )
                 );
+        }
     }
 
     function getRoyaltyConfig()
